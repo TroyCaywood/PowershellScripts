@@ -1,0 +1,59 @@
+#Run this script as a scheduled task using a user with AD access. Will check for computers that haven't contacted the domain in over 180 days, export them to a csv, and send it to an email.
+
+import-module activedirectory 
+$logdate = Get-Date -format yyyyMMdd
+$logfile = "c:\Temp\Old Computers\ExpiredComputers - "+$logdate+".csv"
+$mail = "support@domain.com"
+$smtpserver = "relay.domain.com"
+$emailFrom = "expiredcomputers@domain.com"
+$domain = "XX.Domain.com" 
+$emailTo = "$mail"
+$subject = "Old computers in Active Directory"
+$DaysInactive = 180
+$time = (Get-Date).Adddays(-($DaysInactive))
+$body = 
+    "Attached you will find the inactive computers file.  Please review
+
+    Support@domain.com"
+ 
+# Change this line to the specific OU that you want to search
+$searchOU = "DC=domain,DC=com"
+
+# Get all AD computers with LastLogon less than our time
+$report = Get-ADComputer -SearchBase $searchOU -Filter {LastLogon -lt $time -and enabled -eq $true} -Properties LastLogon, description| select-object Name,DistinguishedName, description, enabled,@{Name="Stamp"; Expression={[DateTime]::FromFileTime($_.LastLogon)}}
+ 
+# Output hostname and LastLogon into CSV
+write-output $report | Sort-Object -Property Name -Descending | Out-File "c:\Temp\Old Computers\ExpiredComputers - $logdate.csv"
+
+#### Count users ####
+
+$oldcomputerscount = @($report).Count
+
+$report2 = Write-Output $report | Sort-Object -Property Name -Descending | ConvertTo-Html -Head $style 
+	
+$style = "<style>BODY{font:arial 10pt;}</style>"
+$style = "<style>BODY{font-family: Arial; font-size: 10pt;}"
+$style = $style + "TABLE{border: 1px solid black; border-collapse: collapse;}"
+$style = $style + "TH{border: 1px solid black; background: #dddddd; padding: 5px; }"
+$style = $style + "TD{border: 1px solid black; padding: 5px; }"
+$style = $style + "</style>"
+
+$body = $report
+$MailMessage = $MailMessage = @{ 
+    To = $mail
+    From = $emailFrom
+    Subject = $subject 
+    Body = "<b>These computers haven't contacted the domain in over 180 days and can be deleted from SCCM and Active Directory. Please verify that list is correct and computer actually doesn't exist before removing.</b><br><br>" + "$report2" 
+    Smtpserver = 'mail.domain.com'
+    ErrorAction = "SilentlyContinue" 
+}
+
+
+If ($oldcomputerscount -gt 0) {
+     Send-MailMessage @MailMessage -BodyAsHtml
+}
+
+
+#Delete 100 day old log files
+
+ Get-ChildItem “C:\Temp\Old Computers\*.csv” | Where LastWriteTime -LT (Get-Date).AddDays(-100) | Remove-Item
